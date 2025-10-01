@@ -155,10 +155,11 @@ bool SetupAdvKeyboard() {
  * @brief キーボードの状態をポーリングし、イベントがあればシリアルに出力する
  */
 void PrintAdvKeyStatus() {
-  uint8_t status;
-  if (I2CReceive(TCA8418_ADDRESS, REG_KEY_LCK_EC, &status)) {
-    // KEビットをチェックしてFIFOにイベントがあるかを確認
-    if (status & 0x01) {
+  uint8_t event_count;
+  if (I2CReceive(TCA8418_ADDRESS, REG_KEY_LCK_EC, &event_count)) {
+    // FIFOにイベントがあるかを確認
+    event_count &= 0x0f;  // 下位4ビットがイベント数
+    if (event_count) {
       uint8_t key_data;
       if (I2CReceive(TCA8418_ADDRESS, REG_KEY_EVENT_A, &key_data)) {
         uint8_t key_id = key_data & 0x7F;   // ビット0-6がキーID
@@ -173,6 +174,7 @@ void PrintAdvKeyStatus() {
     }
   }
 }
+
 /**
  * @brief 旧CardPuterのセットアップ関数
  */
