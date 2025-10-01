@@ -23,9 +23,9 @@ const uint8_t I2C_SCL = G9;
 const uint8_t TCA8418_INT = G11;
 // TCA8418RTWRのレジスタアドレス
 const uint8_t REG_CFG = 0x01;
-const uint8_t REG_KEY_LCK_EC = 0x02;
-const uint8_t REG_KEY_EVENT_A = 0x03;
-const uint8_t REG_INT_STAT = 0x0B;
+const uint8_t REG_INT_STAT = 0x02;
+const uint8_t REG_KEY_LCK_EC = 0x03;
+const uint8_t REG_KEY_EVENT_A = 0x04;
 const uint8_t REG_KP_GPIO1 = 0x1D;
 const uint8_t REG_KP_GPIO2 = 0x1E;
 const uint8_t REG_KP_GPIO3 = 0x1F;
@@ -58,7 +58,7 @@ uint8_t I2CSend(uint8_t address, uint8_t reg, uint8_t data,
  * @param data 読み取ったデータを格納する変数のポインタ
  * @return 読み取り成功時はtrue、失敗時はfalse
  */
-bool I2CRead(uint8_t address, uint8_t reg, uint8_t* data) {
+bool I2CReceive(uint8_t address, uint8_t reg, uint8_t* data) {
   Wire.beginTransmission(address);
   Wire.write(reg);
   if (Wire.endTransmission(false) != 0) return false;
@@ -104,15 +104,15 @@ bool SetupAdvKeyboard() {
   // これらのビットに'1'を設定すると、ピンがキースキャンモードになります。
 
   // 1. キーパッドマトリックス用のROW0-7を有効化 (KP_GPIO1)
-  I2CSend(TCA8418_ADDRESS, REG_KP_GPIO1, 0xFF);  // 全8行を有効化 (ROW0-7)
+  I2CSend(TCA8418_ADDRESS, REG_KP_GPIO1, 0x7F);  // 全8行を有効化 (ROW0-7)
   delay(5);
 
-  // 2. キーパッドマトリックス用のCOL0-6を有効化 (KP_GPIO2)
-  I2CSend(TCA8418_ADDRESS, REG_KP_GPIO2, 0x7F);  // 最初の7列を有効化 (COL0-6)
+  // 2. キーパッドマトリックス用のCOL0-7を有効化 (KP_GPIO2)
+  I2CSend(TCA8418_ADDRESS, REG_KP_GPIO2, 0xFF);
   delay(5);
 
   // 3. 未使用のキーパッドピン (COL8, COL9) を無効化 (KP_GPIO3)
-  I2CSend(TCA8418_ADDRESS, REG_KP_GPIO3, 0x00);  // COL8とCOL9を無効化
+  I2CSend(TCA8418_ADDRESS, REG_KP_GPIO3, 0x00);
   delay(5);
 
   // 4. 割り込みとキーパッドスキャン動作の設定
@@ -124,18 +124,28 @@ bool SetupAdvKeyboard() {
   // 5.
   // クリーンなスタートを確保するため、FIFOバッファ内の古いイベントをフラッシュ
   Serial.println("FIFOバッファをフラッシュしています...");
-  while (true) {
-    uint8_t status;
-    if (!I2CRead(TCA8418_ADDRESS, REG_KEY_LCK_EC, &status)) {
-      break;  // I2Cエラー時は中断
-    }
+  uint8_t status;
+  if (!I2CReceive(TCA8418_ADDRESS, REG_INT_STAT, &status)) {
+    return false;  // I2Cエラー時は中断
+  }
 
-    if ((status & 0x01) == 0) break;  // FIFOが空の場合は中断
+  // FIFOが空の場合は終了
+  if ((status & 0x01) == 0) return true;
+
+  // FIFOのイベント数を取得
+  uint8_t eventCount = -1;
+  while (eventCount != 0) {
+    I2CReceive(TCA8418_ADDRESS, REG_KEY_LCK_EC, &eventCount);
+    eventCount &= 0x08;
+    Serial.printf("Event Count = %u\n", eventCount & 0x07);
 
     // 古いイベントを破棄するためにイベントレジスタから読み取り
     uint8_t dummy_data;
-    I2CRead(TCA8418_ADDRESS, REG_KEY_EVENT_A, &dummy_data);
+    I2CReceive(TCA8418_ADDRESS, REG_KEY_EVENT_A, &dummy_data);
+    delay(5);
   }
+  I2CSend(TCA8418_ADDRESS, REG_INT_STAT, 0x00);  // 割り込みステータスをクリア
+  delay(5);
 
   Serial.println("Initialization complete.");
   return true;
@@ -146,11 +156,11 @@ bool SetupAdvKeyboard() {
  */
 void PrintAdvKeyStatus() {
   uint8_t status;
-  if (I2CRead(TCA8418_ADDRESS, REG_KEY_LCK_EC, &status)) {
+  if (I2CReceive(TCA8418_ADDRESS, REG_KEY_LCK_EC, &status)) {
     // KEビットをチェックしてFIFOにイベントがあるかを確認
     if (status & 0x01) {
       uint8_t key_data;
-      if (I2CRead(TCA8418_ADDRESS, REG_KEY_EVENT_A, &key_data)) {
+      if (I2CReceive(TCA8418_ADDRESS, REG_KEY_EVENT_A, &key_data)) {
         uint8_t key_id = key_data & 0x7F;   // ビット0-6がキーID
         bool is_pressed = key_data & 0x80;  // ビット7が押下/リリース状態
 
